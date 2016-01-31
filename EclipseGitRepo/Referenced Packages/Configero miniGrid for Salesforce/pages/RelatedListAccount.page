@@ -1,0 +1,3 @@
+<apex:page standardController="Account" sidebar="false" showHeader="false">
+<c:GridRelatedListByObject obj="Account" val="{!Account.Id}" />
+</apex:page>

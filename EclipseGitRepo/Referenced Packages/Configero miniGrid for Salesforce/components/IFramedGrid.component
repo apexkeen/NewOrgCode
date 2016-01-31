@@ -1,0 +1,36 @@
+<apex:component access="global" controller="MiniGrid.DummyClass">
+<apex:attribute name="width" type="String" default="100%" description="" access="global" />
+<apex:attribute name="height" type="String" default="100%" description="" access="global" />
+
+<apex:attribute name="obj" type="String" description="" access="global" />
+<apex:attribute name="val" type="Id" description="" access="global" />
+<apex:attribute name="relObj" type="String" default="" description="" access="global" />
+<apex:attribute name="relField" type="String" default="" description="" access="global" />
+<apex:attribute name="disableBulkEdit" type="Boolean" default="false" description="" access="global" />
+<apex:attribute name="readOnly" type="Boolean" default="false" description="" access="global" />
+
+<script>
+{
+    var host = window.location.host.split('.');
+    var doc_domain = false;
+    if (host[host.length - 2] == 'salesforce') {
+    	// URL didn't change, so we force it in
+    	doc_domain = host[0] + '.visual.force.com';
+    } else {
+	    host.shift();
+	    doc_domain = host.join('.');
+    }
+
+    var host_prefix = '';
+    var tmp_ss = '{!$RemoteAction.DummyClass.noop}'.split('.');
+    if (tmp_ss.length == 2) {
+        // no namespace
+        host_prefix = 'c';
+    } else {
+        host_prefix = tmp_ss[0].toLowerCase();
+    }
+    var hosted_url = window.location.protocol + "//" + host_prefix + '.' + doc_domain;
+    document.write('<iframe marginheight="0" marginwidth="0" width="{!JSINHTMLENCODE(width)}" height="{!JSINHTMLENCODE(height)}" frameborder="0" border="0" src="' + hosted_url + '/apex/MiniGrid?obj={!JSINHTMLENCODE(obj)}&val={!JSINHTMLENCODE(val)}&relObj={!JSINHTMLENCODE(relObj)}&relField={!JSINHTMLENCODE(relField)}&disableBulkEdit={!disableBulkEdit}&readOnly={!readOnly}"></iframe>');
+}
+</script>
+</apex:component>

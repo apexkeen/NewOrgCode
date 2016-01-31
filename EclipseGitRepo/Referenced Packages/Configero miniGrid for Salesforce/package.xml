@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Package xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Configero miniGrid for Salesforce</fullName>
+    <apiAccessLevel>Unrestricted</apiAccessLevel>
+    <namespacePrefix>MiniGrid</namespacePrefix>
+    <types>
+        <members>DummyClass</members>
+        <members>TestMethods</members>
+        <name>ApexClass</name>
+    </types>
+    <types>
+        <members>GridRelatedListByObject</members>
+        <members>IFramedGrid</members>
+        <name>ApexComponent</name>
+    </types>
+    <types>
+        <members>MiniGrid</members>
+        <members>RelatedListAccount</members>
+        <members>RelatedListCampaign</members>
+        <members>RelatedListCampaignMember</members>
+        <members>RelatedListCase</members>
+        <members>RelatedListContact</members>
+        <members>RelatedListLead</members>
+        <members>RelatedListOpportunity</members>
+        <name>ApexPage</name>
+    </types>
+    <version>36.0</version>
+</Package>

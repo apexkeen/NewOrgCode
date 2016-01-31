@@ -1,0 +1,9 @@
+<apex:page showHeader="false" sidebar="false">
+<c:GridRelatedListByObject val="{!$CurrentPage.parameters.val}"
+    obj="{!$CurrentPage.parameters.obj}"
+    relObj="{!$CurrentPage.parameters.relObj}"
+    relField="{!$CurrentPage.parameters.relField}"
+    disableBulkEdit="{!$CurrentPage.parameters.disableBulkEdit}"
+    readOnly="{!$CurrentPage.parameters.readOnly}"
+/>
+</apex:page>

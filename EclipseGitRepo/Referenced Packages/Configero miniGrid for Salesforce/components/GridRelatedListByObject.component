@@ -1,0 +1,492 @@
+<apex:component controller="PowerLoader.Configero_GridApp" extensions="PowerLoader.Configero_Framework" access="global">
+<apex:attribute name="obj" type="String" description="" access="global" />
+<apex:attribute name="val" type="Id" description="" access="global" />
+<apex:attribute name="relObj" type="String" description="" access="global" />
+<apex:attribute name="relField" type="String" description="" access="global" />
+<apex:attribute name="disableBulkEdit" type="String" description="true or false" access="global" />
+<apex:attribute name="readOnly" type="String" description="" access="global" />
+<apex:attribute name="disablePropertiesPanel" type="Boolean" default="false" description="" access="global" />
+<apex:attribute name="height" type="Integer" description="" access="global" default="0" />
+<apex:attribute name="defaultTemplateName" type="String" description="" access="global" />
+
+<PowerLoader:Configero_GridApp />
+<style>
+body { margin: 0px; padding: 0px; }
+</style>
+<script>
+var showHideShowFieldsButton = {!$ObjectType.PowerLoader__BulkEditTemplate__c.Createable};
+var CF_disablePropertiesPanel = {!disablePropertiesPanel};
+var CF_minigridEditselectFunc = false;
+$.doLookupEdit = function(vfUrl, selectFunc, initFunc, did, title) {
+   if (!title) title = '';
+   CF_minigridEditselectFunc = selectFunc;
+   var win = window.open(vfUrl, 'CF_minigridEdit', 'height=550,width=1000,location=no,menubar=no,scrollbars=yes');
+   if (!win) {
+   	alert('Unable to open new window.  Please ensure pop-up blockers are disabled');
+   }
+}
+
+var mainTabBar;
+var rels = [];
+var selRel = [];
+var defaultRelObj = '{!JSENCODE(relObj)}';
+var defaultRelField = '{!JSENCODE(relField)}';
+var defaultTemplateName = '{!JSENCODE(defaultTemplateName)}';
+
+CF_setGridParam('mygrid', 'editUrlFunc', function() { return CF_HOSTED_URL + '/apex/Configero_DetailEditLaunch?cl=' + escape(selRel.childSObjectAPIName); });
+CF_setGridParam('mygrid', 'templateSaveName', defaultTemplateName == '' ? undefined : defaultTemplateName);
+
+var oldDetermineDefaultTemplateFromList = determineDefaultTemplateFromList;
+determineDefaultTemplateFromList = function(lst, objType) {
+	if (defaultTemplateName == '') return oldDetermineDefaultTemplateFromList(lst, objType);
+	var potential = false;
+	for (var i = 0; i < lst.length; i++) {
+		if (lst[i].Name == defaultTemplateName) {
+			if (!potential) potential = lst[i].Id;
+			if (lst[i].OwnerId == '{!$User.Id}') potential = lst[i].Id;
+		}
+	}
+	return potential ? potential : oldDetermineDefaultTemplateFromList(lst, objType);
+}
+
+function resetMainGrid() {
+    destroyMainGrid();
+    gridCell.attachObject($('<div />').text('').get(0));
+    gridCell.detachToolbar();
+    if (mainTabBar) mainTabBar.CF_destroy(); 
+    if (window['propertiesCell']) propertiesCell.attachObject($('<div />').text('').get(0));
+}
+function rebuildGrid(fieldDef) {
+    resetMainGrid();
+    addOpenLinkToFieldDef(fieldDef);
+    buildGrid(fieldDef);
+}
+
+function updateRelationship(relPos) {
+  if (window['mygrid']) mygrid.CF_clearSearchHistory();
+
+  selRel = [];
+  if (relPos >= 1) {
+	  selRel = rels[relPos - 1]
+  	  fieldsLoaded[selRel.childSObjectAPIName] = [];
+  }
+
+  resetMainGrid();
+  if (relPos == 0) return;
+
+   CF_gridGetObjectMeta(selRel.childSObjectAPIName, function(result) {
+    handleObjectMetaResults(result);
+
+	// make sure parent field is here
+	var taf = {};
+	taf[selRel.fieldAPIName] = {};
+	CF_setGridParam('mygrid', 'hiddenFields', taf);
+
+    var templateFields = getTemplateById(selRel.childSObjectAPIName, selectedTemplate[selRel.childSObjectAPIName])[CF_NAMESPACE_PREFIX + 'BulkEditTemplateFields__r'];
+
+    var fl = [];
+    fieldsLoaded[selRel.childSObjectAPIName] = fl;
+    var fieldDef = templateFieldsToFieldDef(fl, templateFields, allFieldsByAPIName[selRel.childSObjectAPIName], selRel.childSObjectAPIName, CF_getGridParam('mygrid', 'hiddenFields'));
+
+    addOpenLinkToFieldDef(fieldDef);
+
+    buildGrid(fieldDef, loadRecords);
+  });
+}
+function loadRecords() {
+     // loadRecs
+    mygrid.CF_resetGrid();
+    mygrid.CF_beginSearch();
+}
+
+function buildGrid(fieldDef, func) {
+          __cf._attachGrid(gridCell, {
+              'var': 'mygrid',
+              grid: {
+                  fields: fieldDef,
+                  allowFilter: true,
+                  toolbar: { items: getToolbar(selRel.childSObjectAPIName, 'mygrid') },
+                  allowBulkEdit: {!!IF(disableBulkEdit == 'true', true, false) && !(IF(readOnly == 'true', true, false))},
+                  postInit: function(grid) {
+                     grid.CF_searchGetIdsFunc = doRemoterSearchGetIds;
+                     grid.CF_searchLoadDataForIdsFunc = doRemoterGetDataForIds;
+                     grid.CF_saveRecsFunc = doRemoterSaveRecs;
+                     if (showHideShowFieldsButton) {
+	                     grid.attachEvent('onResizeEnd', function() { saveTemplate(grid, selRel.childSObjectAPIName); });
+                     }
+                     if (func) func();
+                  }
+              }
+          });
+
+   if (!CF_disablePropertiesPanel) attachTabs();
+}
+function attachTabs() {
+   var tabs = getObjectTabs(selRel.childSObjectAPIName);
+
+   mainTabBar = __cf._attachTabbar(propertiesCell, {
+       'type' : 'tabs',
+       'tabs': tabs
+   });
+
+     mygrid.attachEvent('onRowSelect', function(id, ind, force) {
+       if (((mainTabBar.CF_current_rec == undefined && id == '') || (mainTabBar.CF_current_rec == id)) && !force) return;
+       mainTabBar.CF_current_rec = id;
+       // go through all tabs and "unselect" them
+       var tabs = mainTabBar.getAllTabs();
+       var at = mainTabBar.getActiveTab();
+       for (var i = 0; i < tabs.length; i++) {
+            if (tabs[i] != at) {
+                window[tabs[i]].CF_onunSelect();
+            }
+       }
+
+       // select the active tab
+       var w = window[at];
+       if (w) {
+	       w.CF_processed = false;
+	       w.CF_onSelect();
+	   }
+     });
+}
+
+function getDims() {
+    return {'b': {dim: 300, collapsed: true}};
+}
+function prepareLayout() {
+   __cf.setForceHeight({!IF(height == null, 0, height)});
+   if (CF_disablePropertiesPanel) {
+	   __cf.initRootLayout('layoutholder', 
+	       {
+	         'minSize': {},
+	         'tmpl' : '1C',
+	         'dims' : getDims(),
+	         'bsub' : 0,
+	         'rsub' : 0,
+	         'cells': {
+	             'a': {
+	                 'text': 'Results',
+	                 'var': 'gridCell'
+	             }
+	          }
+	       }
+	   );
+   } else {
+	   __cf.initRootLayout('layoutholder', 
+	       {
+	         'minSize': {},
+	         'tmpl' : '2U',
+	         'dims' : getDims(),
+	         'bsub' : 0,
+	         'rsub' : 0,
+	         'cells': {
+	             'a': {
+	                 'text': 'Results',
+	                 'var': 'gridCell'
+	             },
+	             'b': {
+	                 'text': 'Properties',
+	                 'var': 'propertiesCell'
+	             }
+	          }
+	       }
+	   );
+   }
+}
+
+$(function() {
+	var oldFocusTabbable = $.data($('#CF_progressDialog').get(0), 'dialog')['open'];
+	$.data($('#CF_progressDialog').get(0), 'dialog')['open'] = function() {
+		if (this._isOpen) { return; }
+
+		var self = this,
+			options = self.options,
+			uiDialog = self.uiDialog;
+
+		self.overlay = options.modal ? new $.ui.dialog.overlay(self) : null;
+		self._size();
+		self._position(options.position);
+		uiDialog.show(options.show);
+		self.moveToTop(true);
+
+		// prevent tabbing out of modal dialogs
+		if (options.modal) {
+			uiDialog.bind('keypress.ui-dialog', function(event) {
+				if (event.keyCode !== $.ui.keyCode.TAB) {
+					return;
+				}
+
+				var tabbables = $(':tabbable', this),
+					first = tabbables.filter(':first'),
+					last  = tabbables.filter(':last');
+
+				if (event.target === last[0] && !event.shiftKey) {
+					first.focus(1);
+					return false;
+				} else if (event.target === first[0] && event.shiftKey) {
+					last.focus(1);
+					return false;
+				}
+			});
+		}
+
+		// set focus to the first tabbable element in the content area or the first button
+		// if there are no tabbable elements, set focus on the dialog itself
+		/*
+		$(self.element.find(':tabbable').get().concat(
+			uiDialog.find('.ui-dialog-buttonpane :tabbable').get().concat(
+				uiDialog.get()))).eq(0).focus();
+		*/
+
+		self._isOpen = true;
+		self._trigger('open');
+
+		return self;
+	}
+
+	prepareLayout();
+
+   CF_gridGetObjectMeta('{!JSENCODE(obj)}', function(result) {
+          // get all the relationships for this object
+          var allRelationships = result.children;
+          var rel = $('#relationships');
+          var ind = 0;
+          var selInd = -1;
+          rels = [];
+          for (var i = 0; i < allRelationships.length; i++) {
+            var hasMulti = allRelationships[i].relationships.length > 1;
+            for (var j = 0; j < allRelationships[i].relationships.length; j++) {
+                rel.append($('<option />').val(ind).text(allRelationships[i].name + (hasMulti ? ' (' + allRelationships[i].relationships[j].fieldAPIName + ')' : '')));
+                rels.push(allRelationships[i].relationships[j]);
+                if (allRelationships[i].relationships[j].childSObjectAPIName == defaultRelObj && (defaultRelField == '' || allRelationships[i].relationships[j].fieldAPIName == defaultRelField)) {
+                    selInd = ind;
+                }
+                ind++;
+            }
+          }
+          if (selInd >= 0) {
+            rel.val(selInd).change();
+          }
+    });
+    CF_doWhenIdle(function() {
+    	CF_beginProgress('');
+    	$.data($('#CF_progressDialog').get(0), 'dialog')['open'] = oldFocusTabbable;
+    	CF_endProgress();
+    });
+});
+
+function getGlobalFilterCriteria(objApi) {
+	return {};
+}
+
+function doRemoterSearchGetIds(loadPageSize, searchResultsHandler, extraParams) {
+    var criteria = getGlobalFilterCriteria(selRel.childSObjectAPIName);
+    criteria[selRel.fieldAPIName] = '{!JSENCODE(val)}';
+    {!$RemoteAction.Configero_GridApp.getIdsByCriteria}(selRel.childSObjectAPIName, fieldsLoaded[selRel.childSObjectAPIName], criteria, loadPageSize, searchResultsHandler, extraParams);
+}
+function doRemoterGetDataForIds(lastIdBatch, handleLoadResults, extraParams) {
+    {!$RemoteAction.Configero_Framework.getDataForIds}(selRel.childSObjectAPIName, fieldsLoaded[selRel.childSObjectAPIName], lastIdBatch, handleLoadResults, extraParams);
+}
+function doRemoterSaveRecs(recsToSend, saveChangesHandler, extraParams) {
+    var objType = selRel.childSObjectAPIName;
+    {!$RemoteAction.Configero_Framework.saveRecs}(objType, fieldsLoaded[objType], recsToSend, saveChangesHandler, extraParams);
+}
+
+function getToolbar(objType, grid_var) {
+    var toolbar = [];
+    if (!{!IF(readOnly == 'true', true, false)}) {
+		if (allObjectProps[objType].isCreateable || allObjectProps[objType].isDeletable || allObjectProps[objType].isUpdateable) {
+			toolbar.push(
+	               {
+	                   type: "button",
+	                   id: "save_btn",
+	                   img: "Configero/save.png",
+	                   tooltip: 'Save',
+	                   onClick: function(grid) {
+                        	grid.CF_saveChanges();
+	                   }
+	               }
+	        );
+
+	        if (allObjectProps[objType].isCreateable) {        
+	        	toolbar.push(
+	               {
+	                   type: "button",
+	                   id: "add_inline",
+	                   img: "Configero/add_grid.png",
+	                   tooltip: 'Add in Inline Mode',
+	                   onClick: function(grid) {
+	                         var newId = grid.CF_addBlankRow();
+	                         grid.CF_updateLookupValueInGrid(newId, grid.CF_indexByField[selRel.fieldAPIName], '{!JSENCODE(val)}', '-- Populated on Save --');
+	                   }
+	               },
+	               {
+	                   type: "button",
+	                   id: "add",
+	                   img: "Configero/add.png",
+	                   tooltip: 'Add in Form Mode',
+	                   onClick: function(grid) {
+	                         //window.open('/' + allObjectProps[objType]['keyPrefix'] + '/e');
+	                         var editurl = CF_getGridParam(grid.CF_var, 'editUrlFunc')();
+	                         var editurlcompleteFunc = CF_getGridParam(grid.CF_var, 'editUrlCompleteFunc');
+	                         if(editurl) {
+	                             grid.CF_clearSelection();
+	                             var fn = editurlcompleteFunc ? function(params) {
+	                                editurlcompleteFunc(params,obj);
+	                             } : null;
+
+	                             $.doLookupEdit(editurl+'&fde=' + escape(selRel.fieldAPIName) + '&' + escape(selRel.fieldAPIName) + '=' + escape('{!JSENCODE(val)}') + '&idd=&grid='+escape(grid.CF_var), fn,null,'lookupEditDialog', CF_getGridParam(grid.CF_var, 'editTitleFunc') ? CF_getGridParam(grid.CF_var, 'editTitleFunc')() : '');
+	                         }
+	                   }
+	               }
+	           );
+	        }
+	        if (allObjectProps[objType].isUpdateable) {        
+	        	toolbar.push(
+	               {
+	                   type: "button",
+	                   id: "Edit",
+	                   img: "Configero/edit.png",
+	                   tooltip: 'Edit in Form Mode',
+	                   onClick: function(grid) {
+	                        var idd = grid.getSelectedId();
+	                        if (idd) {
+	                        	if ($.isLiveId(idd)) {
+		                             var editurl = CF_getGridParam(grid.CF_var, 'editUrlFunc')(idd);
+		                             if(editurl) {
+		                                 $.doLookupEdit(editurl+'&fde=' + escape(selRel.fieldAPIName) + '&idd='+escape(idd)+'&grid='+escape(grid.CF_var), null,null,'lookupEditDialog', CF_getGridParam(grid.CF_var, 'editTitleFunc') ? CF_getGridParam(grid.CF_var, 'editTitleFunc')(idd) : '');
+		                             }
+		                        } else {
+		                        	alert('This record cannot be edited in form mode.');
+		                        }
+	                         } else {
+	                            alert(SELECT_SOMETHING_TEXT);
+	                         }
+	                   }
+	               }
+	           );
+	        }
+	        if (allObjectProps[objType].isDeletable) {        
+	        	toolbar.push(
+	               {
+	                   type: "button",
+	                   id: "delete",
+	                   img: "Configero/delete.png",
+	                   tooltip: 'Delete',
+	                   onClick: function(grid) {
+	                       grid.CF_deleteRows();
+	                   }
+	               }
+	           );
+	       }
+
+			toolbar.push(
+               { type: "separator" }
+            );
+        }
+    }
+    toolbar = toolbar.concat([
+               {
+                   type: "button",
+                   id: "clear_filters",
+                   img: "Configero/clear.png",
+                   tooltip: 'Clear Filters',
+                   onClick: function(grid) {
+                       grid.CF_clearFilters();
+                   }
+               },
+	         {
+	             type: "button",
+	             id: "global_filter",
+	             img: "Configero/filters.png",
+	             tooltip: 'Global Filter',
+	             onClick: function(grid) {
+	                 CF_gridGlobalFilterPrompt(grid);
+	             }
+	         },
+               {
+                   type: "button",
+                   id: "export",
+                   img: "Configero/export.png",
+                   tooltip: 'Export',
+                   onClick: function(grid) {
+                       grid.CF_exportToCSV();
+                   }
+               },
+               { type: "separator" },
+               {
+                   type: "button",
+                   id: "view_refresh",
+                   img: "Configero/refresh.png",
+                   tooltip: 'Refresh',
+                   onClick: function(grid) {
+                       beginNewSearch(grid.CF_var, objType);
+                   }
+               }
+    ]);
+    if (showHideShowFieldsButton) {
+    	toolbar.push(
+               {
+                   type: "button",
+                   id: "toggle_fields",
+                   img: "Configero/columns.png",
+                   tooltip: 'Hide/Show Fields',
+                   onClick: function(grid) {
+                       hideShowFields(grid, objType);
+                   }
+               }
+    	)
+    }
+    postProcessToolbar(toolbar, objType, grid_var);
+    return toolbar;
+}
+function postProcessToolbar(toolbar, objType, grid_var) {}
+
+function postProcessMetaResults(flds, objType) {
+    if (!{!IF(readOnly == 'true', true, false)}) return;
+    for (var f in flds) {
+        flds[f].CF_ForceReadonly = true;
+    }
+}
+
+postApplyHideShowFields = function(mygrid, objType, flds) {
+    // prepare the layout
+    var mygridName = mygrid.CF_var; // since the next method will recreate the grid and we need a new reference to it
+
+    if (mygrid.CF_fieldDefChangedHandler) {
+        mygrid.CF_fieldDefChangedHandler(objType, flds, function(obj, mygrid) {
+            saveTemplate(mygrid, objType);
+        });
+    } else {
+        beginBulkSearch(objType, flds);
+        mygrid = window[mygridName];
+    
+        var meth = mygrid.attachEvent('CF_onLoadComplete', function() {
+            // now save the template with the new layout and call the search function again
+            saveTemplate(mygrid, objType);
+            mygrid.detachEvent(meth);
+        });
+    }    
+}
+
+function getObjectTabs(objType) {
+   var tabs = [];
+   if (allObjectProps[objType].feedEnabled) tabs.push(__cf.tabTemplate('chatter', {'grid': 'mygrid', 'defaultText': SELECT_SOMETHING_TEXT}));
+   addGenericRelationshipTab(objType, tabs);
+   if (containsRelationshipTo(objType, 'Note')) tabs.push(__cf.tabTemplate('notes', {'grid': 'mygrid', 'defaultText': SELECT_SOMETHING_TEXT}));
+   if (containsRelationshipTo(objType, 'Attachment')) tabs.push(__cf.tabTemplate('attachments', {'grid': 'mygrid', 'defaultText': SELECT_SOMETHING_TEXT}));
+
+   return tabs;
+}
+
+</script>
+
+<div id="relId" style="font-family: Arial; font-size: 12px; display: {!IF(relObj == '', '', 'none')}">
+<b>Relationship:</b> <select id="relationships" onchange="updateRelationship(this.selectedIndex)">
+<option value="" />
+</select>
+</div>
+
+<div id='layoutholder' bsub="0" rsub="0" style='position: relative; width: 100%; height: 100%;'></div>
+
+</apex:component>

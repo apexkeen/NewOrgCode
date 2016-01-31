@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Package xmlns="http://soap.sforce.com/2006/04/metadata">
+    <types>
+        <members>WB_AnnouncementFormatCont_Test</members>
+        <members>WB_AnnouncementFormatController</members>
+        <members>WB_Announcement_Confirmation_Controller</members>
+        <members>WB_Announcementype_Handler</members>
+        <members>WB_Announcementype_Handler_Test</members>
+        <members>WB_Available_LangNew</members>
+        <members>WB_Available_Lang_TestClass</members>
+        <members>WB_Available_Lang_Wizardcontroller</members>
+        <members>WB_Available_Lang_Wizardcontroller1</members>
+        <members>WB_Available_Lang_Wizardcontroller_New</members>
+        <members>WB_Available_Lang_Wizardcontroller_Test</members>
+        <members>WB_Available_Language_RL_Controller</members>
+        <members>WB_Available_Language_RL_Controller_Test</members>
+        <members>WB_Batch_APO_ClientAvailUpdate</members>
+        <members>WB_Batch_CA_Upload</members>
+        <members>WB_Batch_CA_Upload_Test</members>
+        <members>WB_Batch_ClientAvailUpdate</members>
+        <members>WB_Batch_ClientAvailUpdateTest</members>
+        <members>WB_Batch_PriceTierUpdate</members>
+        <members>WB_Batch_ReleasePlanWizard</members>
+        <members>WB_Batch_ReleasePlanWizard2</members>
+        <name>ApexClass</name>
+    </types>
+    <version>36.0</version>
+</Package>

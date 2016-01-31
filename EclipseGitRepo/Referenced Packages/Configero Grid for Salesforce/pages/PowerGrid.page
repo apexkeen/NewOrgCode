@@ -1,0 +1,5 @@
+<apex:page sidebar="false">
+<apex:pageBlock title="Configero Grid for Salesforce" helpTitle="Help" helpUrl="http://www.configero.com/products/grid/help">
+<c:PowerGrid />
+</apex:pageBlock>
+</apex:page>

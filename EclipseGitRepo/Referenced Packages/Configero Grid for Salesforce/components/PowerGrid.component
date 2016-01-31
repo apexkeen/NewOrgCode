@@ -1,0 +1,1192 @@
+<apex:component controller="PowerGrid.PowerGrid" extensions="PowerLoader.Configero_Framework,PowerLoader.Configero_GridApp,PowerLoader.Configero_QueryPanelComponent" access="global">
+<PowerLoader:Configero_GridApp />
+
+<div class="hidden" id="lookupEditDialog"></div>
+<style>
+.noSidebarCell { background-color: #fff; }
+</style>
+
+<script>
+var mainTabBar;
+var showHideShowFieldsButton = {!$ObjectType.PowerLoader__BulkEditTemplate__c.Createable};
+
+function getObjectType() {
+    return $('#objectSel').val();
+}
+
+function getQueryPanelToolbar(objType) {
+    return [
+        {
+            type: "button",
+            id: "filter_btn",
+            img: "Configero/search.png",
+            tooltip: 'Search',
+            onClick: function() {
+                query_panel_submitHandler();
+            }
+         },
+         {
+             type: "button",
+             id: "clear_filters",
+             img: "Configero/clear.png",
+             tooltip: 'Clear Search Criteria',
+             onClick: function(grid) {
+                 CF_QP_resetInputs('query_panel');
+                 $('#query_panel_template_sel').val('');
+             }
+         },
+       { type: "separator" },
+       {
+           type: "button",
+           id: "templateFav",
+           img: 'Configero/favorite.png',
+           tooltip: 'Save Search Criteria',
+           onClick: function() {
+                CF_QP_saveAsTemplate('query_panel', objType, function(rec) {
+                    var sel = $('#query_panel_template_sel');
+                    var opts = sel.get(0).options;
+                    for (var i = 0; i < opts.length; i++) {
+                        if (opts[i].value == rec.Id) {
+                        	sel.val(rec.Id);
+                        	return;
+                        }
+                    }
+                    // doesn't exist - append and select
+                    sel.append($('<option />').text(rec.Name).val(rec.Id)).val(rec.Id);
+                });
+           }
+       },
+       { type: 'text', text: 'Template'}
+     ];
+}
+//-------------------------
+$.doLookupEdit = function(vfUrl, selectFunc, initFunc, did, title) {
+   if (!title) title = '';
+   var ifr = $('<iframe style="width: 100%; height: 100%; border: 0px;" />').attr('src', vfUrl);
+   ifr.get(0).selectFunc = selectFunc;
+   ifr.get(0).initFunc = initFunc;
+   $('#lookupEditDialog').dialog({modal: true, closeOnEscape: true, autoOpen: false, width: 1000, height: 550});
+   $('#'+did).html(ifr).dialog('open').dialog('option', 'title', title);
+}
+
+$.cancelLookupEdit = function(did) {
+   $('#'+did).dialog('close');
+}
+
+CF_setGridParam('mygrid', 'editUrlFunc', function() { return CF_HOSTED_URL + '/apex/Configero_DetailEditLaunch?cl=' + escape(getObjectType()); }); 
+//---------------
+function updateObjectSel(val, func) {
+  if (mygrid) mygrid.CF_clearSearchHistory();
+
+  $('#criteria').html('');
+  queryPanelCell.detachToolbar();
+
+  resetMainGrid();
+  var objType = getObjectType();
+  if (val != '') {
+    // to force an endprogress since handleObjectMetaResults ends it for us
+    CF_gridGetObjectMeta(val, function(result) {
+        handleObjectMetaResults(result);
+
+            // load the query panel
+            CF_beginProgress('Loading Query Panel');
+            {!$RemoteAction.Configero_QueryPanelComponent.getObjectQueryPanel}(objType, function(result, event) {
+                if (event.status == true) {
+                    var autoSubmit = false;
+                    if (CF_QP_writeQueryPanelParameters('query_panel', result, 'criteria')) {
+                        query_panel_submitHandler = function(params) {
+                            beginNewSearch('mygrid', objType);
+                        }
+
+                        var qpToolbar = getQueryPanelToolbar(objType);
+                        if (qpToolbar) {
+                        	var toolbar = __cf._attachToolbar(queryPanelCell, {items: qpToolbar});
+
+						    var sel = $("<select></select>").attr('id', 'query_panel_template_sel');
+						    sel.append($('<option value="">&nbsp;&nbsp;&nbsp;&nbsp;</option>'));
+						    for (var i = 0; i < query_panel_templates.length; i++) {
+						        sel.append($('<option />').text(query_panel_templates[i].Name).val(query_panel_templates[i].Id));
+						    }
+						    sel.change(function() {
+           						CF_QP_applyTemplate('query_panel', this.value);
+						    });
+						    $('.dhx_toolbar_text:last', $(toolbar.base)).after($('<div class="dhx_toolbar_text" style="height: 32px;"/>').append(sel));
+                        }
+
+                        queryPanelCell.CF_showLayoutCell();
+                    } else {
+                        queryPanelCell.CF_hideLayoutCell();
+                        // must autosubmit everything since we don't have a query panel to filter against
+                        autoSubmit = true;
+                    }
+                    if (func) func();
+                    else if (autoSubmit) beginNewSearch('mygrid', objType);
+                    else {
+                        // load a blank grid
+                        ndDataSequence['mygrid'] = [];
+                        loadPreviousResults['mygrid'] = true;
+                        beginTemplateSearch(objType);
+                    }
+                } else {
+                    alert(event.message);
+                }
+                CF_endProgress();
+            }, {escape: false});
+
+    }, function() {
+             $('#objectSel').val('');
+    });
+  } else {
+    queryPanelCell.CF_hideLayoutCell();
+  }
+}
+
+function resetMainGrid() {
+    destroyMainGrid();
+    gridCell.attachObject($('<div />').text('').get(0));
+    gridCell.detachToolbar();
+    if (mainTabBar) mainTabBar.CF_destroy(); 
+    propertiesCell.attachObject($('<div />').text('').get(0));
+}
+
+function rebuildGrid(fieldDef) {
+    resetMainGrid();
+    addOpenLinkToFieldDef(fieldDef);
+    buildGrid(fieldDef);
+}
+
+postApplyHideShowFields = function(mygrid, objType, flds) {
+    // prepare the layout
+    var mygridName = mygrid.CF_var; // since the next method will recreate the grid and we need a new reference to it
+
+    if (mygrid.CF_fieldDefChangedHandler) {
+        mygrid.CF_fieldDefChangedHandler(objType, flds, function(obj, mygrid) {
+            saveTemplateToUserOwnedTemplate(mygrid, objType);
+        });
+    } else {
+        beginBulkSearch(objType, flds);
+        mygrid = window[mygridName];
+    
+        var meth = mygrid.attachEvent('CF_onLoadComplete', function() {
+            // now save the template with the new layout and call the search function again
+            saveTemplateToUserOwnedTemplate(mygrid, objType);
+            mygrid.detachEvent(meth);
+        });
+    }    
+}
+
+/*
+function submitForApproval(grid) {
+    // make sure something is selected
+    var sel = grid.CF_getGridCheckedRows();
+    if (sel.length == 0) return;
+    if (!confirm('Submit selected record(s) for approval?')) return;
+
+     var evt_id = grid.attachEvent('CF_onSaveComplete', function(success) {
+         grid.detachEvent(evt_id);
+
+         // let the save method complete
+         if (!success) {
+             alert('Please correct the validation errors before submitting records for approval.');
+             return;
+         }
+
+         // to keep the screen locked
+         CF_beginProgress('');
+         (function(grid) {
+             window.setTimeout(function() {
+                 CF_endProgress();
+                 // get checked rows again since now it's after the sort
+                 grid.CF_submitBatchOperation(grid.CF_getGridCheckedRows(), function(recs_to_send, callback) {
+                    {!$RemoteAction.PowerGrid.submitForApproval}(recs_to_send, callback, { escape: false });
+                 });
+             }, 10);
+         })(grid);
+     });
+     grid.CF_saveChanges();
+}
+*/
+
+function enableToolbar(grpType, objType, grid_var) {
+    if (grpType != 'drillDown') return true;
+    return !grid_var || grid_var == 'mygrid';
+}
+function postProcessToolbar(toolbar, objType, grid_var) {}
+function addCustomToolbarButtons(toolbar, objType, grid_var) {
+		if (objType == 'CampaignMember') {
+			toolbar.push(
+				{ type: 'separator' },
+                {
+                    type: "button",
+                    id: "edit_contact_lead",
+                    img: "Configero/users.png",
+                    tooltip: 'Edit Contact/Lead',
+                    onClick: function(grid) {
+                        var sel = grid.getSelectedId();
+                        if (!sel || sel == '') {
+                        	alert('Please select a record to continue.');
+                        	return;
+                        }
+
+                    	CF_beginProgress('Loading campaign member information');
+                    	{!$RemoteAction.Configero_Framework.getDataForIds}('CampaignMember', ['ContactId','LeadId'], [sel], function(res, event) {
+                           if (event.status == true) {
+                           	eval('res = ' + res);
+                           	res = res[0];
+                           	var objType = false;
+                           	var idd = false;
+                           	if (res.ContactId) {
+                           		idd = res.ContactId;
+                           		objType = 'Contact';
+                           	} else {
+                           		idd = res.LeadId;
+                           		objType = 'Lead';
+                           	}
+                           	var editurl = CF_HOSTED_URL + '/apex/Configero_DetailEditLaunch?cl=' + escape(objType);
+                           	$.doLookupEdit(editurl+'&idd=' + escape(idd) + '&grid='+escape(grid.CF_var), function() {
+        						CF_refetchAndMergeRecord(grid.CF_var, 'CampaignMember', sel);
+								$.cancelLookupEdit('lookupEditDialog');
+                           	},null,'lookupEditDialog', '');
+                           } else {
+                           	alert(event.message);
+                           }
+                           CF_endProgress();
+                    	}, {escape: false});
+                    }
+                }
+			);
+		} else if (objType == 'Opportunity') {
+			/*toolbar.push(
+				{ type: 'separator' },
+                {
+                    type: "button",
+                    id: "submit_for_approval",
+                    img: "{!URLFOR($Resource.AdminGrid, 'img/approve.png')}",
+                    tooltip: 'Submit for Approval',
+                    onClick: function(grid) {
+                    	submitForApproval(grid);
+                    }
+                }
+			);*/
+		} else if (objType == 'Case') {
+            toolbar.push(
+                { type: "separator" },
+                {
+                    type: "button",
+                    id: "escalate_recs",
+                    img: "{!URLFOR($Resource.AdminGrid, 'img/escalate.png')}",
+                    tooltip: 'Escalate Cases',
+                    onClick: function(grid) {
+                         // make sure something is selected
+                        var sel = grid.CF_getGridCheckedRows();
+                        if (sel.length == 0) return;
+    
+                         // make sure status is visible
+                         var ind = grid.CF_indexByField['IsEscalated'];
+                         if (!ind) {
+                             alert('Escalated field needs to be in the grid to continue.');
+                             if (showHideShowFieldsButton) hideShowFields(grid, objType);
+                             return;
+                         }
+                         
+                         if (!confirm('Escalate selected case(s)?')) return;
+                         var rec;
+                         var val = true;
+                         for (var i = 0; i < sel.length; i++) {
+                             rec = grid.CF_getBufferSequenceRec(sel[i]);
+                             grid.CF_setValueInCellRec(rec, ind, val);
+                             grid.CF_checkWasChanged(rec.idd, ind, val);
+                         }
+                         // now go ahead and run the Save function
+                         grid.CF_saveChanges();
+                     }
+                },
+                {
+                    type: "button",
+                    id: "close_cases",
+                    img: "{!URLFOR($Resource.AdminGrid, 'img/finish.png')}",
+                    tooltip: 'Close Cases',
+                    onClick: function(grid) {
+                         // make sure something is selected
+                        var sel = grid.CF_getGridCheckedRows();
+                        if (sel.length == 0) return;
+    
+                         // make sure status is visible
+                         var ind = grid.CF_indexByField['Status'];
+                         if (!ind) {
+                             alert('Status field needs to be in the grid to continue.');
+                             if (showHideShowFieldsButton) hideShowFields(grid, objType);
+                             return;
+                         }
+                         
+                         if (!confirm('Close selected case(s)?')) return;
+                         var rec;
+                         var val = 'Closed';
+                         for (var i = 0; i < sel.length; i++) {
+                             rec = grid.CF_getBufferSequenceRec(sel[i]);
+                             grid.CF_setValueInCellRec(rec, ind, val);
+                             grid.CF_checkWasChanged(rec.idd, ind, val);
+                         }
+                         // now go ahead and run the Save function
+                         grid.CF_saveChanges();
+                     }
+                },
+                {
+                    type: "button",
+                    id: "reassign_cases",
+                    img: "{!URLFOR($Resource.AdminGrid, 'img/transfer.png')}",
+                    tooltip: 'Reassign Cases',
+                    onClick: function(grid) {
+                         // make sure something is selected
+                        var sel = grid.CF_getGridCheckedRows();
+                        if (sel.length == 0) return;
+    
+                         // make sure status is visible
+                         var ind = grid.CF_indexByField['OwnerId'];
+                         if (!ind) {
+                             alert('Owner field needs to be in the grid to continue.');
+                             if (showHideShowFieldsButton) hideShowFields(grid, objType);
+                             return;
+                         }
+                         
+                         if (!confirm('Update owner for selected case(s)?')) return;
+    
+                         grid.CF_doLookup({index: ind}, function(params) {
+                             for (var i = 0; i < sel.length; i++) {
+                                 grid.CF_updateLookupValueInGridSeq(sel[i], ind, params['id'], params['text']);
+                             }
+                             $('#CF_lookupDialog').dialog('close');
+    
+                             // save everything after lookup update
+                             grid.CF_saveChanges();
+                         });
+                     }
+                },
+                /*
+                {
+                    type: "button",
+                    id: "submit_for_approval",
+                    img: "{!URLFOR($Resource.AdminGrid, 'img/approve.png')}",
+                    tooltip: 'Submit for Approval',
+                    onClick: function(grid) {
+                    	submitForApproval(grid);
+                    }
+                },
+                */
+                {
+                    type: "button",
+                    id: "send_email",
+                    img: "{!URLFOR($Resource.AdminGrid, 'img/email.png')}",
+                    tooltip: 'Send Email',
+                    onClick: function(grid) {
+                        // make sure something is selected
+                        var sel = grid.CF_getGridCheckedRows();
+                        if (sel.length == 0) return;
+    
+                         var ind = grid.CF_indexByField['ContactId'];
+                         if (!ind) {
+                             alert('Contact field needs to be in the grid to continue.');
+                             if (showHideShowFieldsButton) hideShowFields(grid, objType);
+                             return;
+                         }
+                         // go through and make sure ALL contact records have been filled out
+    
+                        if (!confirm('Mass email selected record(s)?')) return;
+    
+                         var evt_id = grid.attachEvent('CF_onSaveComplete', function(success) {
+                             grid.detachEvent(evt_id);
+    
+                             // let the save method complete
+                             if (!success) {
+                                 alert('Please correct the validation errors before sending emails.');
+                                 return;
+                             }
+    
+                             $('#massMailDialog').attr('grid', grid_var).dialog('open');
+                         });
+                         grid.CF_saveChanges();
+                    }
+                }
+               );
+        }
+}
+
+function prepareFieldDef(fieldDef, objType) {
+}
+
+function addTemplateSelectToolbarButtons(toolbar, objType) {
+    toolbar.push(
+       { type: "separator" }
+    );
+    if (showHideShowFieldsButton) {
+    	toolbar.push(
+       	{
+           type: "button",
+           id: "templateFav",
+           img: 'Configero/favorite.png',
+           tooltip: 'Save Template',
+           onClick: function(grid) {
+                saveAsTemplate(grid, objType, function(rec) {
+                    var sel = $('#' + grid.CF_var + '_template_sel');
+                    var opts = sel.get(0).options;
+                    for (var i = 0; i < opts.length; i++) {
+                        if (opts[i].value == rec.Id) {
+                        	sel.val(rec.Id);
+                        	return;
+                        }
+                    }
+                    // doesn't exist - append and select
+                    sel.append($('<option />').text(rec.Name).val(rec.Id)).val(rec.Id);
+                });
+           }
+       }
+       );
+    }
+    toolbar.push(
+       { type: 'text', text: 'Template'}
+    );
+}
+function attachTemplateSelectorToToolbar(toolbar, objType, grid_var, func) {
+    var templateObjType = CF_getGridParam(grid_var, 'templateObjType');
+    if (!templateObjType) templateObjType = objType;
+
+    var sel = $("<select></select>").attr('id', grid_var + '_template_sel').attr('objType', objType).attr('grid_var', grid_var);
+    var idd = selectedTemplate[templateObjType];
+    for (var i = 0; i < allTemplates[objType].length; i++) {
+        sel.append($('<option />').text(allTemplates[objType][i].Name).val(allTemplates[objType][i].Id).attr('selected', idd == allTemplates[objType][i].Id));
+    }
+    sel.change(function() {
+        selectedTemplate[templateObjType] = this.value;
+        func();
+    });
+    $('.dhx_toolbar_text:last', $(toolbar.base)).after($('<div class="dhx_toolbar_text" style="height: 32px;"/>').append(sel));
+}
+
+function getToolbar(objType, grid_var) {
+	var toolbar = [];
+	if (allObjectProps[objType].isCreateable || allObjectProps[objType].isDeletable || allObjectProps[objType].isUpdateable) {
+		toolbar.push(
+               {
+                   type: "button",
+                   id: "save_btn",
+                   img: "Configero/save.png",
+                   tooltip: 'Save',
+                   onClick: function(grid) {
+                        grid.CF_saveChanges();
+                   }
+               }
+        );
+        if (allObjectProps[objType].isCreateable) {        
+        	toolbar.push(
+               {
+                   type: "button",
+                   id: "add_inline",
+                   img: "Configero/add_grid.png",
+                   tooltip: 'Add in Inline Mode',
+                   onClick: function(grid) {
+                         grid.CF_addBlankRow();
+                   }
+               },
+               {
+                   type: "button",
+                   id: "add",
+                   img: "Configero/add.png",
+                   tooltip: 'Add in Form Mode',
+                   onClick: function(grid) {
+                         //window.open('/' + allObjectProps[objType]['keyPrefix'] + '/e');
+                         var editurl = CF_getGridParam(grid.CF_var, 'editUrlFunc')();
+                         var editurlcompleteFunc = CF_getGridParam(grid.CF_var, 'editUrlCompleteFunc');
+                         if(editurl) {
+                             grid.CF_clearSelection();
+                             var fn = editurlcompleteFunc ? function(params) {
+                                editurlcompleteFunc(params,obj);
+                             } : null;
+        
+                             $.doLookupEdit(editurl+'&idd=&grid='+escape(grid.CF_var), fn,null,'lookupEditDialog', CF_getGridParam(grid.CF_var, 'editTitleFunc') ? CF_getGridParam(grid.CF_var, 'editTitleFunc')() : '');
+                         }
+                   }
+               }
+           );
+        }
+        if (allObjectProps[objType].isUpdateable) {        
+        	toolbar.push(
+               {
+                   type: "button",
+                   id: "Edit",
+                   img: "Configero/edit.png",
+                   tooltip: 'Edit in Form Mode',
+                   onClick: function(grid) {
+                        var idd = grid.getSelectedId();
+                        if (idd) {
+                        	if ($.isLiveId(idd)) {
+	                             var editurl = CF_getGridParam(grid.CF_var, 'editUrlFunc')(idd);
+	                             if(editurl) {
+	                                 $.doLookupEdit(editurl+'&idd='+escape(idd)+'&grid='+escape(grid.CF_var), null,null,'lookupEditDialog', CF_getGridParam(grid.CF_var, 'editTitleFunc') ? CF_getGridParam(grid.CF_var, 'editTitleFunc')(idd) : '');
+	                             }
+	                         } else {
+	                         	alert('This record cannot be edited in form mode.');
+	                         }
+                         } else {
+                            alert(SELECT_SOMETHING_TEXT);
+                         }
+                   }
+               }
+           );
+        }
+        if (allObjectProps[objType].isDeletable) {        
+        	toolbar.push(
+               {
+                   type: "button",
+                   id: "delete",
+                   img: "Configero/delete.png",
+                   tooltip: 'Delete',
+                   onClick: function(grid) {
+                       grid.CF_deleteRows();
+                   }
+               }
+           );
+       }
+       toolbar.push(
+               { type: "separator" }
+       );
+   }
+   toolbar = toolbar.concat([
+               {
+                   type: "button",
+                   id: "clear_filters",
+                   img: "Configero/clear.png",
+                   tooltip: 'Clear Filters',
+                   onClick: function(grid) {
+                       grid.CF_clearFilters();
+                   }
+               },
+	         {
+	             type: "button",
+	             id: "global_filter",
+	             img: "Configero/filters.png",
+	             tooltip: 'Global Filter',
+	             onClick: function(grid) {
+	                 CF_gridGlobalFilterPrompt(grid);
+	             }
+	         },
+               {
+                   type: "button",
+                   id: "export",
+                   img: "Configero/export.png",
+                   tooltip: 'Export',
+                   onClick: function(grid) {
+                       grid.CF_exportToCSV();
+                   }
+               },
+               { type: "separator" },
+               {
+                   type: "button",
+                   id: "view_refresh",
+                   img: "Configero/refresh.png",
+                   tooltip: 'Refresh',
+                   onClick: function(grid) {
+                       beginNewSearch(grid.CF_var, objType);
+                   }
+               },
+               {
+                   type: "button",
+                   id: "togger_fullscreen",
+                   img: "Configero/full_screen.png",
+                   tooltip: 'Toggle Full Screen',
+                   onClick: function(grid) {
+                       $('#AppBodyHeader').toggle();
+                       __cf.resizeContainer(true);
+                   }
+               }
+    ]);
+    if (showHideShowFieldsButton) {
+		toolbar.push(
+               {
+                   type: "button",
+                   id: "toggle_fields",
+                   img: "Configero/columns.png",
+                   tooltip: 'Hide/Show Fields',
+                   onClick: function(grid) {
+                       hideShowFields(grid, objType);
+                   }
+               }
+		);
+    }
+    if (enableToolbar('drillDown', objType, grid_var)) {
+        toolbar.push(
+               { type: "separator" },
+               {
+                   type: "button",
+                   id: "drillup",
+                   img: "{!URLFOR($Resource.AdminGrid, 'img/drill_up.png')}",
+                   tooltip: 'Drill Up',
+                   onClick: function(grid) {
+                        drillUp();
+                   }
+               },
+               {
+                   type: "button",
+                   id: "drilldown",
+                   img: "{!URLFOR($Resource.AdminGrid, 'img/drill_down.png')}",
+                   tooltip: 'Drill Down',
+                   onClick: function(grid) {
+                        drillDown();
+                   }
+               }
+         );
+    }
+    if (allObjectProps[objType].feedEnabled && enableToolbar('chatter', objType, grid_var)) {
+        toolbar.push(
+               { type: "separator" },
+               {
+                   type: "button",
+                   id: "chatter_post",
+                   img: "{!URLFOR($Resource.AdminGrid, 'img/chat.png')}",
+                   tooltip: 'Chatter Post',
+                   onClick: function(grid) {
+                       // make sure something is selected
+                       var sel = grid.CF_getGridCheckedRows();
+                       if (sel.length == 0) return;
+                       if (!confirm('Save modified records and bulk Chatter post to selected record(s)?')) return;
+
+                        var evt_id = grid.attachEvent('CF_onSaveComplete', function(success) {
+                            grid.detachEvent(evt_id);
+
+                            // let the save method complete
+                            if (!success) {
+                                alert('Please correct the validation errors before posting to chatter.');
+                                return;
+                            }
+
+                            $('#chatterPostDialog').attr('grid', grid_var).dialog('open');
+                        });
+                        grid.CF_saveChanges();
+                   }
+               },
+               {
+                   type: "button",
+                   id: "chatter_follow",
+                   img: "{!URLFOR($Resource.AdminGrid, 'img/subscribe.png')}",
+                   tooltip: 'Chatter Follow',
+                   onClick: function(grid) {
+                       // make sure something is selected
+                       var sel = grid.CF_getGridCheckedRows();
+                       if (sel.length == 0) return;
+                       if (!confirm('Save modified records and follow selected record(s) in Chatter?')) return;
+
+                        var evt_id = grid.attachEvent('CF_onSaveComplete', function(success) {
+                            grid.detachEvent(evt_id);
+
+                            // let the save method complete
+                            if (!success) {
+                                alert('Please correct the validation errors before following selected record(s).');
+                                return;
+                            }
+
+                            // to keep the screen locked
+                            CF_beginProgress('');
+                            (function(grid) {
+                                window.setTimeout(function() {
+                                    CF_endProgress();
+                                    // get checked rows again since now it's after the sort
+                                    grid.CF_submitBatchOperation(grid.CF_getGridCheckedRows(), function(recs_to_send, callback) {
+                                        {!$RemoteAction.PowerGrid.chatterFollow}(recs_to_send, callback, { escape: false });
+                                    });
+                                }, 10);
+                            })(grid);                            
+                        });
+                        grid.CF_saveChanges();
+                   }
+               },
+               {
+                   type: "button",
+                   id: "chatter_unfollow",
+                   img: "{!URLFOR($Resource.AdminGrid, 'img/unsubscribe.png')}",
+                   tooltip: 'Chatter Unfollow',
+                   onClick: function(grid) {
+                       // make sure something is selected
+                       var sel = grid.CF_getGridCheckedRows();
+                       if (sel.length == 0) return;
+                       if (!confirm('Save modified records and unfollow selected record(s) in Chatter?')) return;
+
+                        var evt_id = grid.attachEvent('CF_onSaveComplete', function(success) {
+                            grid.detachEvent(evt_id);
+
+                            // let the save method complete
+                            if (!success) {
+                                alert('Please correct the validation errors before unfollowing selected record(s).');
+                                return;
+                            }
+
+                            // to keep the screen locked
+                            CF_beginProgress('');
+                            (function(grid) {
+                                window.setTimeout(function() {
+                                    CF_endProgress();
+                                    // get checked rows again since now it's after the sort
+                                    grid.CF_submitBatchOperation(grid.CF_getGridCheckedRows(), function(recs_to_send, callback) {
+                                        {!$RemoteAction.PowerGrid.chatterUnfollow}(recs_to_send, callback, { escape: false });
+                                    });
+                                }, 10);
+                            })(grid);                            
+                        });
+                        grid.CF_saveChanges();
+                   }
+               }
+        )
+    }
+    addCustomToolbarButtons(toolbar, objType, grid_var);
+    postProcessToolbar(toolbar, objType, grid_var);
+    addTemplateSelectToolbarButtons(toolbar, objType);
+    return toolbar;
+}
+function getGridSetupParams(fieldDef, objType, toolbar, grid_var) {
+    return {
+        fields: fieldDef,
+        allowFilter: true,
+        allowBulkEdit: true,
+        postInit: function(grid) {
+            grid.attachEvent('onResizeEnd', function() { saveTemplateToUserOwnedTemplate(grid, getObjectType()); });
+        },
+        'toolbar': {
+            items: toolbar,
+            postInit: function(toolbar) {
+                attachTemplateSelectorToToolbar(toolbar, objType, grid_var, function() {
+                    refreshResults(grid_var, objType);
+                });
+            }
+        }
+    };
+}
+function setupRemoteGridHooks() {
+   mygrid.CF_searchGetIdsFunc = doRemoterSearchGetIds;
+   mygrid.CF_searchLoadDataForIdsFunc = doRemoterGetDataForIds;
+   mygrid.CF_saveRecsFunc = doRemoterSaveRecs;
+}
+function getObjectTabs(objType) {
+   var tabs = [];
+   if (allObjectProps[objType].feedEnabled) tabs.push(__cf.tabTemplate('chatter', {'grid': 'mygrid', 'defaultText': SELECT_SOMETHING_TEXT}));
+
+   addGenericRelationshipTab(objType, tabs, function(toolbar, objType, tv, obj) {
+     attachTemplateSelectorToToolbar(toolbar, obj.CF_childObjType, tv + '_relationship_grid', function() {
+	   obj.CF_redrawGrid();
+     });
+   });
+
+   if (containsRelationshipTo(objType, 'Note')) tabs.push(__cf.tabTemplate('notes', {'grid': 'mygrid', 'defaultText': SELECT_SOMETHING_TEXT}));
+   if (containsRelationshipTo(objType, 'Attachment')) tabs.push(__cf.tabTemplate('attachments', {'grid': 'mygrid', 'defaultText': SELECT_SOMETHING_TEXT}));
+
+   //if (containsRelationshipTo(objType, 'Task')) tabs.push(__cf.tabTemplate('tasks', {'grid': 'mygrid', 'defaultText': SELECT_SOMETHING_TEXT}));
+   //if (containsRelationshipTo(objType, 'Event')) tabs.push(__cf.tabTemplate('events', {'grid': 'mygrid', 'defaultText': SELECT_SOMETHING_TEXT}));
+   return tabs;
+}
+/***** BUILD GRID ******************/
+function buildGrid(fieldDef) {
+   var objType = getObjectType();
+   prepareFieldDef(fieldDef, objType);
+   var toolbar = getToolbar(objType, 'mygrid');
+   var params = getGridSetupParams(fieldDef, objType, toolbar, 'mygrid');
+
+   __cf._attachGrid(gridCell, {
+       'var':  'mygrid',
+       'grid': params
+   });
+   setupRemoteGridHooks();
+   var tabs = getObjectTabs(objType);
+
+   mainTabBar = __cf._attachTabbar(propertiesCell, {
+       'type' : 'tabs',
+       'tabs': tabs
+   });
+
+     mygrid.attachEvent('onRowSelect', function(id, ind, force) {
+       if (((mainTabBar.CF_current_rec == undefined && id == '') || (mainTabBar.CF_current_rec == id)) && !force) return;
+       mainTabBar.CF_current_rec = id;
+       // go through all tabs and "unselect" them
+       var tabs = mainTabBar.getAllTabs();
+       var at = mainTabBar.getActiveTab();
+       for (var i = 0; i < tabs.length; i++) {
+            if (tabs[i] != at) {
+                window[tabs[i]].CF_onunSelect();
+            }
+       }
+
+       // select the active tab
+       var w = window[at];
+       if (w) {
+	       w.CF_processed = false;
+	       w.CF_onSelect();
+	    }
+     });
+}
+
+function doRemoterSearchGetIds(loadPageSize, searchResultsHandler, extraParams) {
+    var objType = getObjectType();
+    if (CF_QP_isValidPanel('query_panel')) {
+        if (!CF_QP_validateForm('query_panel')) {
+            CF_endProgress();
+            return false;
+        }
+        {!$RemoteAction.Configero_QueryPanelComponent.getIds}(objType, fieldsLoaded[objType], query_panel_id, CF_QP_serialize('query_panel'), loadPageSize, searchResultsHandler, extraParams);
+    } else {
+        {!$RemoteAction.Configero_GridApp.getIds}(objType, fieldsLoaded[objType], false, loadPageSize, searchResultsHandler, extraParams);
+    }
+}
+function doRemoterGetDataForIds(lastIdBatch, handleLoadResults, extraParams) {
+    var objType = getObjectType();
+    {!$RemoteAction.Configero_Framework.getDataForIds}(objType, fieldsLoaded[objType], lastIdBatch, handleLoadResults, extraParams);
+}
+function doRemoterSaveRecs(recsToSend, saveChangesHandler, extraParams) {
+    var objType = getObjectType();
+    {!$RemoteAction.Configero_Framework.saveRecs}(objType, fieldsLoaded[objType], recsToSend, saveChangesHandler, extraParams);
+}
+</script>
+
+
+<!--  criteria form -->
+<div id="criteria_container" class="hidden">
+<div><div id="criteria"></div></div>
+</div>
+<!--  end criteria form -->
+
+ <script>
+function getDefaultObject() {
+	return $.getUrlParam('obj');
+}
+function postLoad() {
+    var obj = getDefaultObject();
+    if (obj != null) {
+        $('#objectSelContainer').hide();
+        __cf.resizeLayout();
+        $('#objectSel').val(obj).trigger('change');
+        if ($.getUrlParam('al') != null) {
+            CF_doWhenIdle(function() {
+                CF_beginProgress('');
+                if (window['query_panel_submitHandler']) {
+                    query_panel_submitHandler();
+                }
+                CF_endProgress();
+            });
+        }
+    }
+}
+
+ sfdcPage.appendToOnloadQueue(function() {
+   CF_getPagePreference(function(dims) {
+    initRootLayout(dims);
+    postLoad();
+    queryPanelCell.CF_hideLayoutCell();
+   });
+ });
+
+function getDefaultLayoutDimensions(dims) {
+    if (dims['a'] == undefined) {
+        dims['a'] = 160;
+        dims['c'] = 300;
+    }
+    return dims;
+} 
+ function initRootLayout(dims) {
+    dims = getDefaultLayoutDimensions(dims);
+
+   __cf.initRootLayout('layoutholder', 
+       {
+         'tmpl' : '3T',
+         'dims' : dims,
+         'cells': {
+             'a' : {
+                 'text': 'Criteria',
+                 'var': 'queryPanelCell',
+                 'content': {
+                     type: 'html',
+                     html: 'criteria'
+                 }
+             },
+             'b' : {
+                 'text': 'Results',
+                 'var': 'gridCell'
+             },
+             'c': {
+                 'text': 'Properties',
+                 'var': 'propertiesCell'
+             }
+          }
+       }
+   );
+ }
+
+function postToChatter(dlg) {
+    var mygrid = window[$('#chatterPostDialog').attr('grid')];
+    var message = $('#chatter_message').val();
+    if (message == '') {
+        alert('Please enter a message to post.');
+        return;
+    }
+    $(dlg).dialog('close');
+
+    // to keep the screen locked
+    mygrid.CF_submitBatchOperation(mygrid.CF_getGridCheckedRows(), function(recs_to_send, callback) {
+        {!$RemoteAction.PowerGrid.addChatterPost}(recs_to_send, message, $('#chatter_link').val(), callback, { escape: false });
+    });
+
+    // clear selection so user can re-select the record to reload the chatter feed
+    CF_doWhenIdle(function() {
+        CF_beginProgress('');
+        mygrid.CF_clearSelection();
+        CF_endProgress();
+    });
+}
+
+function sendMassMail(dlg) {
+    var mygrid = window[$('#massMailDialog').attr('grid')];
+    if ($('#mass_mail_template_id').val() == '') {
+        alert('Please select a template to continue.')
+        return;
+    }
+    $(dlg).dialog('close');
+    mygrid.CF_submitBatchOperation(mygrid.CF_getGridCheckedRows(), function(recs_to_send, callback) {
+        {!$RemoteAction.PowerGrid.massMail}(recs_to_send, $('#mass_mail_template_id').val(), $('#mass_mail_reply_to').val(), $('#mass_mail_display_name').val(), $('#mass_mail_bcc').is(':checked'), $('#mass_mail_save_as_activity').is(':checked'), $('#mass_mail_use_signature').is(':checked'), callback, { escape: false });
+    });
+}
+
+$(function() {
+    $('#chatterPostDialog').dialog({modal: true, closeOnEscape: true, autoOpen: false, width: 600, height: 350, buttons: { 'Post': function() { postToChatter(this); }, 'Cancel': function() { $(this).dialog('close'); } } });
+    $('#massMailDialog').dialog({modal: true, closeOnEscape: true, autoOpen: false, width: 600, height: 350, buttons: { 'Send': function() { sendMassMail(this); }, 'Cancel': function() { $(this).dialog('close'); } } });
+    $('#drillUpDialog').dialog({width: 400, height: 200, modal: true, autoOpen: false, buttons: { 'Continue': function() { drillUpSubmit(); }, 'Cancel': function() { $(this).dialog('close'); } } });
+    $('#drillDownDialog').dialog({width: 400, height: 200, modal: true, autoOpen: false, buttons: { 'Continue': function() { drillDownSubmit(); }, 'Cancel': function() { $(this).dialog('close'); } } });
+});
+
+
+/***** DRILL UP / DOWN *************/
+function drillDown() {
+    var s = mygrid.CF_getGridCheckedRows();
+    if (s.length == 0) return;
+    if (s.length > 10000) {
+        // limitation in SF in clause 
+        alert('Maximum 10,000 records can be selected for drill down.');
+        return;
+    }
+
+    var ds = $('#drillDownObjectSel');
+    ds.children().remove().end().append($('<option />').attr('value', ''));
+    $('#drillDownRelationshipSel').children().remove();
+    
+    var objType = getObjectType();
+    for (var i = 0; i < allChildRelationships[objType].length; i++) {
+        ds.append($('<option />').attr('value', i).text(allChildRelationships[objType][i].name));
+    }
+    $('#drillDownDialog').dialog('open');
+}
+function drillDownObjectSelected(val) {
+    var ds = $('#drillDownRelationshipSel');
+    ds.children().remove().end().append($('<option />').attr('value', ''));
+    if (val == '') return;
+    
+    var objType = getObjectType();
+    for (var i = 0; i < allChildRelationships[objType][val].relationships.length; i++) {
+        ds.append($('<option />').attr('value', i).text(allChildRelationships[objType][val].relationships[i].relationshipName));
+    }
+    if (ds.children().length == 2) {
+        // select the only child by default
+        ds.val(ds.children().last().attr('value'));
+    }
+}
+function drillDownSubmit() {
+    var dd = $('#drillDownObjectSel').val();
+    var ds = $('#drillDownRelationshipSel').val();
+    if (ds == '') {
+        alert('Please select a relationship to continue.');
+        return;
+    }
+
+    var s = mygrid.CF_getGridCheckedRows();
+    var d = [];
+    for (var i = 0; i < s.length; i++) {
+        rec = mygrid.CF_getBufferSequenceRec(s[i]);
+        if ($.isTemporaryId(rec.idd)) continue;
+        d.push(rec.idd);
+    }
+
+    $('#drillDownDialog').dialog('close');
+
+    // send this to the server to get the list of IDs
+    // change the object in the drop down to this new object
+    var x = allChildRelationships[getObjectType()][dd].relationships[ds];
+    $('#objectSel').val(x['childSObjectAPIName']);
+    updateObjectSel(x['childSObjectAPIName'], function() {
+        CF_beginProgress('Finding Drill Down records');
+        {!$RemoteAction.Configero_GridApp.getDrillUpIds}(x['childSObjectAPIName'], x['fieldAPIName'], d, function(result, event) {
+            CF_endProgress();
+            if (event.status == true) {
+                ndDataSequence['mygrid'] = [];
+                for (var i = 0; i < result.length; i++) {
+                    ndDataSequence['mygrid'].push(result[i].Id);
+                }
+                loadPreviousResults['mygrid'] = true;
+                beginTemplateSearch(getObjectType());
+            } else {
+                // an anomoly occurred - find more info from this request and set all pending accounts in that list with this
+                alert(event.message);
+            }
+        }, {escape: false});
+    });
+}
+
+
+function drillUp() {
+    var s = mygrid.CF_getGridCheckedRows();
+    if (s.length == 0) return;
+
+    var ds = $('#drillUpFieldSel');
+    ds.children().remove().end().append($('<option />').attr('value', ''));
+    for (var i = 0; i < mygrid.CF_fieldDef.length; i++) {
+        if (mygrid.CF_fieldDef[i]['related']) {
+            ds.append($('<option />').attr('value', i).text(mygrid.CF_fieldDef[i]['name']));
+        }
+    }
+    $('#drillUpDialog').dialog('open');
+}
+function drillUpSubmit() {
+    var dd = $('#drillUpFieldSel').val();
+    if (dd == '') {
+        alert('Please select a field to continue.');
+        return;
+    }
+
+    var s = mygrid.CF_getGridCheckedRows();
+    ndDataSequence['mygrid'] = [];
+    var rid = false;
+    var fld = mygrid.CF_fieldDef[dd]['field'];
+    var seen = {};
+    for (var i = 0; i < s.length; i++) {
+        rec = mygrid.CF_getBufferSequenceRec(s[i]);
+        rid = mygrid.CF_getUserData(rec.idd, fld);
+        if (rid && rid != '' && !seen[rid]) {
+            ndDataSequence['mygrid'].push(rid);
+            seen[rid] = 1;
+        }
+    }
+
+    $('#drillUpDialog').dialog('close');
+
+    // send this to the server to get the list of IDs
+    // change the object in the drop down to this new object
+    var x = mygrid.CF_fieldDef[dd]['related'];
+    if (x.indexOf(',') >= 0) {
+        // just pick one - if it has User in it, chances are we want to go that route - otherwise just pick the first
+        x = x.split(',');
+        var sendOff = x[0];
+        for (var i = 0; i < x.length; i++) {
+            if (x[i] == 'User') { sendOff = 'User'; break; }
+        }
+        x = sendOff;
+        alert('The field chosen can contain records from multiple object types.  Drilling up assuming: ' + x);
+    }
+    $('#objectSel').val(x);
+    loadPreviousResults['mygrid'] = true;
+    updateObjectSel(x, function() {
+        // set it to true again since it would have already been set to false
+        loadPreviousResults['mygrid'] = true;
+        beginTemplateSearch(getObjectType());
+    });
+}
+
+function doTemplateLookup() {
+    parent.$.CF_doLookup(CF_HOSTED_URL + '/apex/Configero_LookupNameTemplate?obj=EmailTemplate', function(params) {
+        $('#mass_mail_template_name').text(params['text']);
+        $('#mass_mail_template_id').val(params['id']);
+        parent.$.CF_cancelLookup();
+    });
+}
+
+</script>
+
+<div id="objectSelContainer">
+<b>Select an Object:</b> 
+<select name="objectSel" id="objectSel" onchange="updateObjectSel(this.value)">
+   <option value=""></option>
+   <apex:repeat value="{!objectListMulti_CUSTOM}" var="objW">
+    <apex:repeat value="{!objW}" var="obj">
+      <option value="{!HTMLENCODE(obj.value)}" >{!HTMLENCODE(obj.label)} ({!HTMLENCODE(obj.Value)})</option>
+    </apex:repeat>
+   </apex:repeat>
+</select>
+</div>
+
+<div id='layoutholder' style='position: relative; width: 100%; height: 100%;'></div>
+
+<div class="hidden" id="chatterPostDialog">
+<form>
+<table border="0" cellspacing="2" cellpadding="2" width="100%">
+<tr>
+    <td valign="top"><b>Message</b></td>
+    <td><textarea name="chatter_message" id="chatter_message" rows="12" cols="40" style="width: 100%"></textarea></td>
+</tr>
+<tr>
+    <td><b>Link</b></td>
+    <td><input type="text" name="chatter_link" id="chatter_link" style="width: 100%" /></td>
+</tr>
+</table>
+</form>
+</div>
+
+<div id="drillUpDialog" class="hidden" title="Drill Up">
+    <form>
+        <table border="0" cellspacing="2" cellpadding="2">
+            <tr>
+                <td><b>Field:</b></td>
+                <td><select name="fieldSel" id="drillUpFieldSel"></select></td>
+            </tr>
+        </table>
+    </form>
+</div>
+
+<div id="drillDownDialog" class="hidden" title="Drill Down">
+    <form>
+        <table border="0" cellspacing="2" cellpadding="2">
+            <tr>
+                <td><b>Object:</b></td>
+                <td><select onchange="drillDownObjectSelected(this.value)" name="objectSel" id="drillDownObjectSel"></select></td>
+            </tr>
+            <tr>
+                <td><b>Relationship:</b></td>
+                <td><select name="relationshipSel" id="drillDownRelationshipSel"></select></td>
+            </tr>
+        </table>
+    </form>
+</div>
+
+<div id="massMailDialog" class="hidden" title="Mass Mail">
+    <form id="mass_mail_dialog">
+        <table border="0" cellspacing="2" cellpadding="2" width="100%">
+            <tr>
+                <td><b>Template:</b></td>
+                <td width="100%">
+                    <input type="hidden" name="template_id" id="mass_mail_template_id" /><span id="mass_mail_template_name"></span> <a href="javascript:void(0)" onclick="doTemplateLookup()"><img src="/s.gif" class="lookupIcon" /></a>
+                </td>
+            </tr>
+            <tr>
+                <td><b>Bcc:</b></td>
+                <td><input style="width: 100%" type="text" id="mass_mail_bcc" name="bcc" /></td>
+            </tr>
+            <tr>
+                <td><b>Display Name:</b></td>
+                <td><input style="width: 100%" type="text" id="mass_mail_display_name" name="display_name" /></td>
+            </tr>
+            <tr>
+                <td><b>Reply to:</b></td>
+                <td><input style="width: 100%" type="text" id="mass_mail_reply_to" name="reply_to" /></td>
+            </tr>
+            <tr>
+                <td nowrap="nowrap"><b>Save as Activity:</b></td>
+                <td><input type="checkbox" name="save_as_activity" id="mass_mail_save_as_activity" checked="checked" /></td>
+            </tr>
+            <tr>
+                <td><b>Use Signature:</b></td>
+                <td><input type="checkbox" name="use_signature" id="mass_mail_use_signature" checked="checked" /></td>
+            </tr>
+        </table>
+    </form>
+</div>
+
+</apex:component>

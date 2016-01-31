@@ -1,0 +1,3 @@
+<apex:page standardController="Opportunity" sidebar="false" showHeader="false">
+<c:GridRelatedListByObject obj="Opportunity" val="{!Opportunity.Id}" />
+</apex:page>
