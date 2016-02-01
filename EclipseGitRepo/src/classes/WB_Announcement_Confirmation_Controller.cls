@@ -15,7 +15,8 @@ public with sharing class WB_Announcement_Confirmation_Controller {
     public string announcementName;
     public string accountIdRedir{get;set;}
     public String param{get;set;}
-    public set<Id> annoucementIds = new set<Id>();
+       public String param{get;set;}  // added to learn Git
+    public list<Id> annoucementIds = new list<Id>();// added to learn GIT
     public transient map<Id, Announcement_Record__c> clientAvailAnnRecordMap = new map<Id, Announcement_Record__c>();
     public transient map<Id,set< ID >> announcementRecordMap = new map<Id,set< ID >>();
     
