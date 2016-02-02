@@ -2,6 +2,8 @@ public with sharing class WB_Announcement_Confirmation_Controller {
     
     // Save 1 - GIT
     //save 2 -GIT -2
+    //Save 3 Git 3
+    //
     public string announcementTypeIds{get;set;}
     public List<String> lstAnnouncementTypeId;
     public List<Announcement_Rule__c> announcementRuleList{set;get;}   // list of selected Announcement Types list
